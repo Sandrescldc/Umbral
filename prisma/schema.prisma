@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Cuentas — heredado de Off Market casi sin cambios. El rol global identifica
+// qué tipo de actor es alguien en general; el rol dentro de un proyecto
+// concreto vive en ProjectRole/Participation, más abajo.
+//
+// A diferencia de Off Market, el MVP no integra Stripe Identity: la
+// verificación es autodeclarada (igual que ya era la verificación
+// financiera en Off Market). Se puede añadir verificación real más
+// adelante sin tocar el resto del modelo.
+// ---------------------------------------------------------------------------
+
+enum GlobalRole {
+  ESTRUCTURADOR
+  INVERSOR
+  ENTIDAD_FINANCIERA
+  CONSTRUCTORA
+  NOTARIA
+  PROPIETARIO_SUELO
+  TECNICO
+}
+
+enum VerificationLevel {
+  UNVERIFIED
+  VERIFIED
+  VERIFIED_FINANCIAL
+}
+
+model User {
+  id                String            @id @default(cuid())
+  email             String            @unique
+  passwordHash      String
+  name              String
+  role              GlobalRole
+  verificationLevel VerificationLevel @default(UNVERIFIED)
+  financialsConfirmed Boolean         @default(false)
+  createdAt         DateTime          @default(now())
+
+  sessions              Session[]
+  projectsOwned         Project[]       @relation("ProjectStructurator")
+  participations        Participation[] @relation("ParticipationUser")
+  invitedParticipations Participation[] @relation("ParticipationInvitedBy")
+  decidedRequests       AccessRequest[] @relation("DecidedByUser")
+  accessLogs            AccessLog[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Proyecto — sustituye a Listing como objeto central. Todo cuelga de aquí.
+// ---------------------------------------------------------------------------
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+  ARCHIVED
+}
+
+model Project {
+  id              String        @id @default(cuid())
+  structuratorId  String
+  structurator    User          @relation("ProjectStructurator", fields: [structuratorId], references: [id], onDelete: Cascade)
+  name            String
+  reference       String
+  location        String
+  teaserSummary   String        // lo que ve cualquiera invitado, antes de NDA
+  fullDescription String
+  status          ProjectStatus @default(ACTIVE)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  milestones     ProjectMilestone[]
+  roles          ProjectRole[]
+  documents      ProjectDocument[]
+  participations Participation[]
+  accessLogs     AccessLog[]
+}
+
+// ---------------------------------------------------------------------------
+// Hitos — la línea de tiempo del proyecto. El MVP solo usa tres; el resto del
+// ciclo completo (origen, licencia, formalización, ejecución, salida) se
+// añade cuando se amplíe el alcance más allá de equity + financiación.
+// ---------------------------------------------------------------------------
+
+enum MilestoneKey {
+  VIABILIDAD
+  EQUITY
+  FINANCIACION
+}
+
+enum MilestoneStatus {
+  PENDING
+  ACTIVE
+  CLOSED
+}
+
+model ProjectMilestone {
+  id            String          @id @default(cuid())
+  projectId     String
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  key           MilestoneKey
+  sortOrder     Int
+  status        MilestoneStatus @default(PENDING)
+  // Condición legible por humanos ("equity comprometido ≥ 80%"); en el MVP
+  // el estructurador cierra el hito a mano, no se evalúa automáticamente.
+  closeCriteria String
+  closedAt      DateTime?
+
+  rolesOpenedHere ProjectRole[]
+
+  @@unique([projectId, key])
+}
+
+// ---------------------------------------------------------------------------
+// Roles habilitados en ESTE proyecto, y en qué hito se abren. El MVP solo usa
+// INVERSOR y ENTIDAD_FINANCIERA; CONSTRUCTORA, NOTARIA y PROPIETARIO_SUELO se
+// añaden cuando se amplíe el alcance.
+// ---------------------------------------------------------------------------
+
+enum ProjectRoleType {
+  INVERSOR
+  ENTIDAD_FINANCIERA
+}
+
+model ProjectRole {
+  id                 String           @id @default(cuid())
+  projectId          String
+  project            Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  roleType           ProjectRoleType
+  opensAtMilestoneId String
+  opensAtMilestone   ProjectMilestone @relation(fields: [opensAtMilestoneId], references: [id])
+
+  disclosureLevels DisclosureLevel[]
+  participations   Participation[]
+  documents        ProjectDocument[]
+
+  @@unique([projectId, roleType])
+}
+
+// El nivel 0 (teaser anónimo) es implícito y no hace falta modelarlo: es lo
+// que ve cualquiera antes de tener una Participation activa. Los niveles
+// 1..N de aquí son específicos de cada rol — el inversor y el banco no
+// necesariamente tienen el mismo número de niveles ni ven lo mismo en cada uno.
+model DisclosureLevel {
+  id            String      @id @default(cuid())
+  projectRoleId String
+  projectRole   ProjectRole @relation(fields: [projectRoleId], references: [id], onDelete: Cascade)
+  level         Int
+  label         String      // ej. "Memoria y números agregados"
+  description   String
+
+  documents ProjectDocument[]
+
+  @@unique([projectRoleId, level])
+}
+
+// ---------------------------------------------------------------------------
+// Participación — un User ocupando un ProjectRole en un Project. Sustituye
+// al "buyer" único de Off Market: una misma persona puede tener varias
+// participaciones, en proyectos distintos o incluso en roles distintos.
+//
+// currentLevel absorbe lo que en Off Market era AccessGrant: no hace falta
+// una tabla aparte porque el "grant vigente" es sencillamente el estado
+// actual de la participación, no un historial (el historial ya vive en
+// AccessLog).
+// ---------------------------------------------------------------------------
+
+enum ParticipationStatus {
+  INVITED
+  ACTIVE
+  WITHDRAWN
+  REMOVED
+}
+
+model Participation {
+  id            String              @id @default(cuid())
+  projectId     String
+  project       Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectRoleId String
+  projectRole   ProjectRole         @relation(fields: [projectRoleId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User                @relation("ParticipationUser", fields: [userId], references: [id], onDelete: Cascade)
+  status        ParticipationStatus @default(INVITED)
+  ndaAcceptedAt DateTime?
+  currentLevel  Int                 @default(0)
+  invitedAt     DateTime            @default(now())
+  invitedById   String
+  invitedBy     User                @relation("ParticipationInvitedBy", fields: [invitedById], references: [id])
+
+  accessRequests AccessRequest[]
+  accessLogs     AccessLog[]
+
+  @@unique([projectRoleId, userId])
+}
+
+// ---------------------------------------------------------------------------
+// Documentos del proyecto — igual que ListingDocument, pero el nivel
+// requerido ya no es un entero fijo (0–3): apunta a la escala de ESE rol.
+// Fuera del alcance de la primera pantalla del MVP (sin subida ni gestión
+// de documentos todavía); el modelo ya deja sitio para cuando se añada.
+// ---------------------------------------------------------------------------
+
+model ProjectDocument {
+  id                String          @id @default(cuid())
+  projectId         String
+  project           Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name              String
+  url               String
+  requiredRoleId    String
+  requiredRole      ProjectRole     @relation(fields: [requiredRoleId], references: [id], onDelete: Cascade)
+  requiredLevelId   String
+  requiredLevel     DisclosureLevel @relation(fields: [requiredLevelId], references: [id])
+}
+
+// ---------------------------------------------------------------------------
+// Solicitud de subir de nivel + aprobación — mismo mecanismo que
+// AccessRequest en Off Market, dirigido a una Participation en vez de a una
+// ficha, y con un nivel objetivo explícito.
+// ---------------------------------------------------------------------------
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+model AccessRequest {
+  id              String        @id @default(cuid())
+  participationId String
+  participation   Participation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  requestedLevel  Int
+  message         String
+  status          RequestStatus @default(PENDING)
+  decidedById     String?
+  decidedBy       User?         @relation("DecidedByUser", fields: [decidedById], references: [id])
+  decidedAt       DateTime?
+  createdAt       DateTime      @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Auditoría — igual que en Off Market, generalizada a proyecto/participación.
+// ---------------------------------------------------------------------------
+
+enum AccessAction {
+  PARTICIPATION_INVITED
+  NDA_ACCEPTED
+  LEVEL_REQUESTED
+  LEVEL_APPROVED
+  LEVEL_REJECTED
+  PARTICIPATION_WITHDRAWN
+  MILESTONE_CLOSED
+}
+
+model AccessLog {
+  id              String         @id @default(cuid())
+  projectId       String
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  participationId String?
+  participation   Participation? @relation(fields: [participationId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action          AccessAction
+  level           Int?
+  detail          String?
+  createdAt       DateTime       @default(now())
+}

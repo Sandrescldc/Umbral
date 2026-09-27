@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/*
+ * Reutiliza el sistema de marca "Medianoche" de Off Market (mismo grupo).
+ * Warm ivory canvas, near-black midnight for primary actions and headings,
+ * champagne-ink as the reserved accent, sage/terracotta for approved/
+ * rejected states, hairline borders instead of heavy shadows. Cormorant
+ * Garamond for display headings, Inter for everything else. Un sistema
+ * visual propio de Umbral es trabajo de diseño aparte, no bloqueante.
+ */
+@theme {
+  --color-background: #f5f3ee;
+  --color-surface: #fbfaf7;
+  --color-surface-sunken: #f5f3ee;
+  --color-foreground: #12161d;
+  --color-muted: #4a5261;
+  --color-muted-light: #9ba1aa;
+  --color-border: #e4dfd3;
+  --color-border-light: #ece7dc;
+
+  --color-primary: #12161d;
+  --color-primary-foreground: #f5f3ee;
+
+  --color-accent: #6f5a36;
+  --color-accent-hover: #5c4a2c;
+  --color-accent-soft: color-mix(in srgb, var(--color-accent) 16%, transparent);
+
+  --color-verified: #3e4f41;
+  --color-verified-soft: color-mix(in srgb, var(--color-verified) 16%, transparent);
+
+  --color-danger: #7a3c2d;
+  --color-danger-soft: color-mix(in srgb, var(--color-danger) 16%, transparent);
+
+  --color-ink: #12161d;
+  --color-ink-foreground: #f5f3ee;
+  --color-scrim: #12161d;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Cormorant Garamond", Georgia, serif;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+h1,
+h2 {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}

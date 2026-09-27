@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: umbral
+      POSTGRES_PASSWORD: umbral
+      POSTGRES_DB: umbral
+    ports:
+      - "5432:5432"
+    volumes:
+      - umbral_db_data:/var/lib/postgresql/data
+
+volumes:
+  umbral_db_data:
